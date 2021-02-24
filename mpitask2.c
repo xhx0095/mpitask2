@@ -1,46 +1,72 @@
-#include <mpi.h>
+#include "mpi.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-
-double f(double x) {
-	return (2 + x );
+#define min(x, y) ((x) > (y) ? (y) : (x))
+float f(float x) {
+	return  x;
 }
-
-int main(int argc, char** argv) {
-	int rank, size;
-	double a = 0.0, b = 5.0;
-	MPI_Init(&argc, &argv);
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
+float integral(float a, float b, float n) {
+	float h = (b - a) / n, T = 0;
+	for (float i = 1; i < n; i++)  T += f(a + i * h);  //1 <= k <= n - 1
+	return h * (f(a) + 2 * T + f(b)) / 2;
+}
+int main(int argc, char *argv[])
+{
+	int m = 10, g= 10;
+	int master = 0;
+	int myid, numprocs;
+	int i, j;
+	float a[10],d[10];
+	float part_result,c=0;
 	MPI_Status status;
-	int pro_num = size;
-	int per_num = 10000, k;
-	double w = (b - a) / (1.0 * pro_num * per_num);
-	double part_num = 0.0, x;
-	for (k = 0; k < per_num; ++k) {
-		x = a+ (1.0 * rank * per_num + k) * w + w / 2.0;
-		part_num += f(x) * w;
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	/*master process*/
+	if (master == myid) {
+	
+		for (i = 0; i < m; i++)
+		{
+			a[i] = i;
+			
+		}
+		int numsent = 0;
+		for (i = 1; i < min(numprocs, m + 1); i++)
+		{
+			MPI_Send(&a[i - 1], g, MPI_FLOAT, i, ++numsent, MPI_COMM_WORLD);
+		}
+		
+		for (i = 0; i < m; i++)
+		{
+			MPI_Recv(&part_result, 1, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+			 c+= part_result;
+			if (numsent < m) {
+				MPI_Send(&a[numsent], g, MPI_FLOAT, status.MPI_SOURCE, numsent + 1, MPI_COMM_WORLD);
+				numsent = numsent + 1;
+
+			}
+			else { /*close slave process*/
+				float close = 1.0;
+				MPI_Send(&close, 1, MPI_FLOAT, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+
+			}
+		}
+		printf(" the integral of f(x)=x from 0 to 10 is %1.3f\t", c);
 	}
-	if (0 != rank) {
-		MPI_Recv(rank, 1, MPI_DOUBLE, rank, rank, MPI_COMM_WORLD, &status);
-		MPI_Send(&part_num, 1, MPI_DOUBLE, 0, rank, MPI_COMM_WORLD);
-	}
+	/*slave process calculate integral */
 	else {
-		int j = 0;
-		double result = part_num;
-		double temp_res;
-		for (j = 1; j < size; ++j) {
-			MPI_Send(j, 1, MPI_DOUBLE, 0, rank, MPI_COMM_WORLD);
+		while (1)
+		{
+			part_result = 0;
+			MPI_Recv(&d[0], g, MPI_FLOAT, master, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+			if (0 != status.MPI_TAG) {
+				part_result = integral(d[0],d[0]+1,1000);
+				MPI_Send(&part_result, 1, MPI_FLOAT, master, status.MPI_TAG, MPI_COMM_WORLD);
+			}
+			else {
+				break;
+			}
 		}
-		for (j = 1; j < size; ++j) {
-			MPI_Probe(MPI_ANY_SOURCE, rank, MPI_COMM_WORLD, &status);
-			MPI_Get_count(&status, MPI_CHAR, &temp_res);
-			MPI_Recv(&temp_res, 1, MPI_DOUBLE, j, j, MPI_COMM_WORLD, &status);
-			result += temp_res;
-		}
-		printf("result is : %.3f\n", result);
+
 	}
 	MPI_Finalize();
-	return 0;
 }
